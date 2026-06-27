@@ -56,7 +56,7 @@ function initDatabase(): void {
         FOREIGN KEY (category_id) REFERENCES group_categories(id) ON DELETE CASCADE,
         FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE CASCADE,
         FOREIGN KEY (teacher_id) REFERENCES teachers(id) ON DELETE CASCADE,
-        UNIQUE(category_id, course_id)
+        UNIQUE(category_id, course_id, teacher_id)
     )");
 
     $db->exec("CREATE TABLE IF NOT EXISTS schedule_slots (

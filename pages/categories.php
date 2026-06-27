@@ -46,13 +46,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $teacherId = (int)$_POST['teacher_id'];
         $lectureCount = max(1, (int)($_POST['lecture_count'] ?? 1));
 
-        $stmt = $db->prepare("INSERT OR REPLACE INTO category_courses (category_id, course_id, teacher_id, lecture_count) VALUES (:cat, :c, :t, :lc)");
-        $stmt->bindValue(':cat', $catId, SQLITE3_INTEGER);
-        $stmt->bindValue(':c', $courseId, SQLITE3_INTEGER);
-        $stmt->bindValue(':t', $teacherId, SQLITE3_INTEGER);
-        $stmt->bindValue(':lc', $lectureCount, SQLITE3_INTEGER);
-        $stmt->execute();
-        flash('success', 'Course assigned to category.');
+        $pair = $courseId . '_' . $teacherId;
+        $checkStmt = $db->prepare("SELECT id FROM category_courses WHERE category_id = :cat AND course_id = :c AND teacher_id = :t");
+        $checkStmt->bindValue(':cat', $catId, SQLITE3_INTEGER);
+        $checkStmt->bindValue(':c', $courseId, SQLITE3_INTEGER);
+        $checkStmt->bindValue(':t', $teacherId, SQLITE3_INTEGER);
+        if ($checkStmt->execute()->fetchArray()) {
+            flash('error', 'This course+teacher combination is already assigned.');
+        } else {
+            $stmt = $db->prepare("INSERT INTO category_courses (category_id, course_id, teacher_id, lecture_count) VALUES (:cat, :c, :t, :lc)");
+            $stmt->bindValue(':cat', $catId, SQLITE3_INTEGER);
+            $stmt->bindValue(':c', $courseId, SQLITE3_INTEGER);
+            $stmt->bindValue(':t', $teacherId, SQLITE3_INTEGER);
+            $stmt->bindValue(':lc', $lectureCount, SQLITE3_INTEGER);
+            $stmt->execute();
+            flash('success', 'Course assigned to category.');
+        }
         header('Location: ?page=categories&manage=' . $catId);
         exit;
     }
@@ -108,7 +117,7 @@ if (isset($_GET['manage'])) {
         }
     }
 }
-$assignedCourseIds = array_column($assignedCourses, 'course_id');
+$assignedPairs = array_map(fn($ac) => $ac['course_id'] . '_' . $ac['teacher_id'], $assignedCourses);
 ?>
 
 <div class="page-header">
@@ -196,9 +205,7 @@ $assignedCourseIds = array_column($assignedCourses, 'course_id');
             <select name="course_id" required>
                 <option value="">Select course...</option>
                 <?php foreach ($courses as $c): ?>
-                    <?php if (!in_array($c['id'], $assignedCourseIds)): ?>
                     <option value="<?= $c['id'] ?>"><?= htmlspecialchars($c['name']) ?></option>
-                    <?php endif; ?>
                 <?php endforeach; ?>
             </select>
         </div>
