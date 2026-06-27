@@ -54,29 +54,47 @@ while ($row = $result->fetchArray(SQLITE3_ASSOC)) {
 // Clear existing schedule
 $db->exec("DELETE FROM schedule_slots");
 
-// For each group, determine required weekly slots per course
+// Fill ALL available slots proportionally by lecture count.
+// Instead of distributing thinly over the entire period, pack every slot from Monday.
+$totalAvailableSlots = $dailySlots * count($teachingDays);
+
 $groupEntries = [];
 $groupRemaining = [];
 foreach ($groups as $group) {
     $catId = $group['category_id'];
     if (!isset($categoryCourses[$catId])) continue;
 
-    foreach ($categoryCourses[$catId] as $cc) {
-        $weeks = getTeachingWeeks(
-            $settings['start_date'], $settings['end_date'],
-            $weekendDays, $holidays,
-            $cc['sub_start_date'], $cc['sub_end_date']
-        );
-        $weeklySlots = ($weeks > 0) ? (int)ceil($cc['lecture_count'] / $weeks) : $cc['lecture_count'];
-        $weeklySlots = max(1, $weeklySlots);
-        $idx = count($groupEntries[$group['id']] ?? []);
-        $groupEntries[$group['id']][$idx] = [
+    $catEntries = $categoryCourses[$catId];
+    $totalLectures = array_sum(array_column($catEntries, 'lecture_count'));
+    if ($totalLectures === 0) continue;
+
+    // Largest remainder method: allocate weekly slots proportional to lecture count
+    $floorShares = [];
+    $remainders = [];
+    foreach ($catEntries as $i => $cc) {
+        $raw = $cc['lecture_count'] / $totalLectures * $totalAvailableSlots;
+        $floorShares[$i] = max(1, (int)floor($raw));
+        $remainders[$i] = $raw - $floorShares[$i];
+    }
+
+    $allocated = array_sum($floorShares);
+    $toDistribute = $totalAvailableSlots - $allocated;
+
+    arsort($remainders);
+    foreach ($remainders as $i => $rem) {
+        if ($toDistribute <= 0) break;
+        $floorShares[$i]++;
+        $toDistribute--;
+    }
+
+    foreach ($catEntries as $i => $cc) {
+        $groupEntries[$group['id']][$i] = [
             'course_id' => $cc['course_id'],
             'teacher_id' => $cc['teacher_id'],
-            'weekly_needed' => $weeklySlots,
+            'weekly_needed' => $floorShares[$i],
             'course_name' => $cc['course_name'],
         ];
-        $groupRemaining[$group['id']][$idx] = $weeklySlots;
+        $groupRemaining[$group['id']][$i] = $floorShares[$i];
     }
 }
 
