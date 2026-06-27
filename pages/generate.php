@@ -55,7 +55,8 @@ while ($row = $result->fetchArray(SQLITE3_ASSOC)) {
 $db->exec("DELETE FROM schedule_slots");
 
 // For each group, determine required weekly slots per course
-$groupCourseWeekly = [];
+$groupEntries = [];
+$groupRemaining = [];
 foreach ($groups as $group) {
     $catId = $group['category_id'];
     if (!isset($categoryCourses[$catId])) continue;
@@ -68,65 +69,87 @@ foreach ($groups as $group) {
         );
         $weeklySlots = ($weeks > 0) ? (int)ceil($cc['lecture_count'] / $weeks) : $cc['lecture_count'];
         $weeklySlots = max(1, $weeklySlots);
-        $groupCourseWeekly[$group['id']][] = [
+        $idx = count($groupEntries[$group['id']] ?? []);
+        $groupEntries[$group['id']][$idx] = [
             'course_id' => $cc['course_id'],
             'teacher_id' => $cc['teacher_id'],
             'weekly_needed' => $weeklySlots,
-            'remaining' => $weeklySlots,
             'course_name' => $cc['course_name'],
         ];
+        $groupRemaining[$group['id']][$idx] = $weeklySlots;
     }
 }
 
-// Track teacher assignments: $teacherAssigned[day][slot] = teacher_id
-$teacherAssigned = [];
+// Greedy assignment: iterate day/slot in order, for each group pick best course
+// - Prefer course different from previous slot (avoid consecutive same course)
+// - Among valid candidates, pick the one with most remaining slots (spread evenly)
+// - Empty slots naturally end up at the end of the week
 
-// Schedule: iterate over each day and slot, assign courses to groups
+$teacherAssigned = []; // [dow][slot][teacher_id] = true
 $scheduled = [];
+$groupLastCourse = []; // [gid] => course_id of last assigned slot (reset each day)
 
 foreach ($teachingDays as $dow) {
+    // Reset consecutive tracking at start of each day
+    $groupLastCourse = [];
+
     for ($slot = 1; $slot <= $dailySlots; $slot++) {
         foreach ($groups as $group) {
             $gid = $group['id'];
-            if (!isset($groupCourseWeekly[$gid])) continue;
-
-            $assigned = false;
-            foreach ($groupCourseWeekly[$gid] as &$entry) {
-                if ($entry['remaining'] <= 0) continue;
-
-                $tid = $entry['teacher_id'];
-                $cid = $entry['course_id'];
-
-                // Check teacher availability
-                if (!isset($teacherAvail[$tid][$dow][$slot])) continue;
-
-                // Check teacher not double-booked
-                if (isset($teacherAssigned[$dow][$slot][$tid])) continue;
-
-                // Assign
+            if (!isset($groupEntries[$gid])) {
                 $scheduled[] = [
-                    'group_id' => $gid,
-                    'day_of_week' => $dow,
-                    'slot_number' => $slot,
-                    'course_id' => $cid,
-                    'teacher_id' => $tid,
+                    'group_id' => $gid, 'day_of_week' => $dow,
+                    'slot_number' => $slot, 'course_id' => null, 'teacher_id' => null,
                 ];
-                $teacherAssigned[$dow][$slot][$tid] = true;
-                $entry['remaining']--;
-                $assigned = true;
-                break;
+                continue;
             }
-            unset($entry);
 
-            // If nothing assigned, insert empty slot
-            if (!$assigned) {
+            $lastCid = $groupLastCourse[$gid] ?? null;
+            $bestIdx = -1;
+            $bestScore = -1;
+
+            // Pass 1: find best course that is different from previous slot
+            foreach ($groupRemaining[$gid] as $i => $rem) {
+                if ($rem <= 0) continue;
+                $e = $groupEntries[$gid][$i];
+                if ($e['course_id'] === $lastCid) continue;
+                if (!isset($teacherAvail[$e['teacher_id']][$dow][$slot])) continue;
+                if (isset($teacherAssigned[$dow][$slot][$e['teacher_id']])) continue;
+                if ($rem > $bestScore) {
+                    $bestScore = $rem;
+                    $bestIdx = $i;
+                }
+            }
+
+            // Pass 2: if nothing found, allow consecutive same course
+            if ($bestIdx === -1) {
+                foreach ($groupRemaining[$gid] as $i => $rem) {
+                    if ($rem <= 0) continue;
+                    $e = $groupEntries[$gid][$i];
+                    if (!isset($teacherAvail[$e['teacher_id']][$dow][$slot])) continue;
+                    if (isset($teacherAssigned[$dow][$slot][$e['teacher_id']])) continue;
+                    if ($rem > $bestScore) {
+                        $bestScore = $rem;
+                        $bestIdx = $i;
+                    }
+                }
+            }
+
+            if ($bestIdx >= 0) {
+                $e = $groupEntries[$gid][$bestIdx];
                 $scheduled[] = [
-                    'group_id' => $gid,
-                    'day_of_week' => $dow,
-                    'slot_number' => $slot,
-                    'course_id' => null,
-                    'teacher_id' => null,
+                    'group_id' => $gid, 'day_of_week' => $dow,
+                    'slot_number' => $slot, 'course_id' => $e['course_id'], 'teacher_id' => $e['teacher_id'],
                 ];
+                $teacherAssigned[$dow][$slot][$e['teacher_id']] = true;
+                $groupRemaining[$gid][$bestIdx]--;
+                $groupLastCourse[$gid] = $e['course_id'];
+            } else {
+                $scheduled[] = [
+                    'group_id' => $gid, 'day_of_week' => $dow,
+                    'slot_number' => $slot, 'course_id' => null, 'teacher_id' => null,
+                ];
+                $groupLastCourse[$gid] = null;
             }
         }
     }
@@ -150,10 +173,10 @@ foreach ($scheduled as $s) {
 $warnings = [];
 foreach ($groups as $group) {
     $gid = $group['id'];
-    if (!isset($groupCourseWeekly[$gid])) continue;
-    foreach ($groupCourseWeekly[$gid] as $entry) {
-        if ($entry['remaining'] > 0) {
-            $warnings[] = "Group {$group['name']}: could not place {$entry['remaining']} weekly slot(s) for \"{$entry['course_name']}\"";
+    if (!isset($groupEntries[$gid])) continue;
+    foreach ($groupEntries[$gid] as $i => $entry) {
+        if ($groupRemaining[$gid][$i] > 0) {
+            $warnings[] = "Group {$group['name']}: could not place {$groupRemaining[$gid][$i]} weekly slot(s) for \"{$entry['course_name']}\"";
         }
     }
 }
