@@ -15,27 +15,31 @@ $dailySlots = $settings['daily_slots'];
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = $_POST['action'] ?? '';
 
-    if ($action === 'mark_day_done') {
-        $date = $_POST['mark_date'] ?? '';
-        if ($date) {
-            $stmt = $db->prepare("UPDATE daily_schedule SET status = 'done' WHERE schedule_date = :d AND status = 'scheduled' AND course_id IS NOT NULL");
-            $stmt->bindValue(':d', $date, SQLITE3_TEXT);
+    if ($action === 'mark_range_done') {
+        $from = $_POST['from_date'] ?? '';
+        $to = $_POST['to_date'] ?? '';
+        if ($from && $to) {
+            $stmt = $db->prepare("UPDATE daily_schedule SET status = 'done' WHERE schedule_date >= :f AND schedule_date <= :t AND status = 'scheduled' AND course_id IS NOT NULL");
+            $stmt->bindValue(':f', $from, SQLITE3_TEXT);
+            $stmt->bindValue(':t', $to, SQLITE3_TEXT);
             $stmt->execute();
             $count = $db->changes();
-            flash('success', "Marked $count lectures as done for $date.");
+            flash('success', "Marked $count lectures as done ($from ~ $to).");
         }
         header('Location: ?page=statistics');
         exit;
     }
 
-    if ($action === 'unmark_day') {
-        $date = $_POST['mark_date'] ?? '';
-        if ($date) {
-            $stmt = $db->prepare("UPDATE daily_schedule SET status = 'scheduled' WHERE schedule_date = :d AND status = 'done'");
-            $stmt->bindValue(':d', $date, SQLITE3_TEXT);
+    if ($action === 'unmark_range') {
+        $from = $_POST['from_date'] ?? '';
+        $to = $_POST['to_date'] ?? '';
+        if ($from && $to) {
+            $stmt = $db->prepare("UPDATE daily_schedule SET status = 'scheduled' WHERE schedule_date >= :f AND schedule_date <= :t AND status = 'done'");
+            $stmt->bindValue(':f', $from, SQLITE3_TEXT);
+            $stmt->bindValue(':t', $to, SQLITE3_TEXT);
             $stmt->execute();
             $count = $db->changes();
-            flash('success', "Reverted $count lectures back to scheduled for $date.");
+            flash('success', "Reverted $count lectures back to scheduled ($from ~ $to).");
         }
         header('Location: ?page=statistics');
         exit;
@@ -105,25 +109,37 @@ while ($row = $result->fetchArray(SQLITE3_ASSOC)) {
     </div>
 </div>
 
-<!-- Mark day as done -->
+<!-- Mark date range -->
 <div class="card">
-    <h2>Mark Day</h2>
-    <div class="form-row">
+    <h2>Mark Lectures</h2>
+    <div class="form-row" style="flex-wrap: wrap; gap: 16px;">
         <form method="POST" class="form-row" style="flex: 1;">
-            <input type="hidden" name="action" value="mark_day_done">
+            <input type="hidden" name="action" value="mark_range_done">
             <div class="form-group">
-                <label>Date</label>
-                <input type="date" name="mark_date" value="<?= $today ?>" required
+                <label>From</label>
+                <input type="date" name="from_date" value="<?= htmlspecialchars($settings['start_date']) ?>" required
+                    min="<?= htmlspecialchars($settings['start_date']) ?>"
+                    max="<?= htmlspecialchars($settings['end_date']) ?>">
+            </div>
+            <div class="form-group">
+                <label>To</label>
+                <input type="date" name="to_date" value="<?= $today ?>" required
                     min="<?= htmlspecialchars($settings['start_date']) ?>"
                     max="<?= htmlspecialchars($settings['end_date']) ?>">
             </div>
             <button type="submit" class="btn btn-success">Mark as Done</button>
         </form>
         <form method="POST" class="form-row">
-            <input type="hidden" name="action" value="unmark_day">
+            <input type="hidden" name="action" value="unmark_range">
             <div class="form-group">
-                <label>Undo Date</label>
-                <input type="date" name="mark_date" required
+                <label>From</label>
+                <input type="date" name="from_date" required
+                    min="<?= htmlspecialchars($settings['start_date']) ?>"
+                    max="<?= htmlspecialchars($settings['end_date']) ?>">
+            </div>
+            <div class="form-group">
+                <label>To</label>
+                <input type="date" name="to_date" required
                     min="<?= htmlspecialchars($settings['start_date']) ?>"
                     max="<?= htmlspecialchars($settings['end_date']) ?>">
             </div>
