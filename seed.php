@@ -21,10 +21,16 @@ $db->exec("INSERT INTO settings (id, start_date, end_date, daily_slots, weekends
     VALUES (1, '2026-09-01', '2026-12-20', 6, '0,6', '[\"2026-10-03\",\"2026-10-09\",\"2026-12-25\"]')");
 echo "Settings: OK\n";
 
-// 2. Teachers
+// 2. Teachers (30)
 $teachers = [
     'Prof. Smith', 'Prof. Johnson', 'Prof. Williams', 'Prof. Brown',
-    'Prof. Taylor', 'Prof. Davies', 'Prof. Wilson', 'Prof. Evans'
+    'Prof. Taylor', 'Prof. Davies', 'Prof. Wilson', 'Prof. Evans',
+    'Prof. Thomas', 'Prof. Roberts', 'Prof. Walker', 'Prof. Wright',
+    'Prof. Thompson', 'Prof. White', 'Prof. Hughes', 'Prof. Edwards',
+    'Prof. Green', 'Prof. Hall', 'Prof. Lewis', 'Prof. Harris',
+    'Prof. Clarke', 'Prof. Jackson', 'Prof. Wood', 'Prof. Turner',
+    'Prof. Martin', 'Prof. Cooper', 'Prof. Hill', 'Prof. Ward',
+    'Prof. Morris', 'Prof. Moore'
 ];
 foreach ($teachers as $t) {
     $stmt = $db->prepare("INSERT INTO teachers (name) VALUES (:n)");
@@ -50,12 +56,13 @@ foreach ($teacherIds as $tid) {
     }
 }
 
-// Restrict Prof. Kim: only available Mon/Wed/Fri
-$db->exec("DELETE FROM teacher_availability WHERE teacher_id = 1 AND day_of_week IN (2, 4)");
-// Restrict Prof. Han: only available afternoons (slots 4-6)
-$db->exec("DELETE FROM teacher_availability WHERE teacher_id = 8 AND slot_number < 4");
+// Restrict some teachers
+$db->exec("DELETE FROM teacher_availability WHERE teacher_id = 1 AND day_of_week IN (2, 4)");   // Prof. Smith: Mon/Wed/Fri only
+$db->exec("DELETE FROM teacher_availability WHERE teacher_id = 8 AND slot_number < 4");          // Prof. Evans: afternoon only (slots 4-6)
+$db->exec("DELETE FROM teacher_availability WHERE teacher_id = 15 AND day_of_week IN (1, 3)");   // Prof. Hughes: Tue/Thu/Fri only
+$db->exec("DELETE FROM teacher_availability WHERE teacher_id = 22 AND slot_number > 3");         // Prof. Jackson: morning only (slots 1-3)
 
-echo "Teacher availability: set (Prof. Smith=Mon/Wed/Fri only, Prof. Evans=afternoon only)\n";
+echo "Teacher availability: set (Smith=Mon/Wed/Fri, Evans=afternoon, Hughes=Tue/Thu/Fri, Jackson=morning)\n";
 
 // 4. Courses
 $courses = [
@@ -67,9 +74,9 @@ $courses = [
     ['History', null, null],
     ['Computer Science', null, null],
     ['Biology', null, null],
-    ['Art', '2026-09-01', '2026-10-31'],          // sub-range: first 2 months only
+    ['Art', '2026-09-01', '2026-10-31'],
     ['Physical Education', null, null],
-    ['Music', '2026-11-01', '2026-12-20'],         // sub-range: last 2 months only
+    ['Music', '2026-11-01', '2026-12-20'],
     ['Economics', null, null],
 ];
 foreach ($courses as $c) {
@@ -86,33 +93,34 @@ $db->exec("INSERT INTO group_categories (name) VALUES ('Year 1')");
 $db->exec("INSERT INTO group_categories (name) VALUES ('Year 2')");
 echo "Categories: Year 1, Year 2\n";
 
-// 6. Category Courses (category_id, course_id, teacher_id, lecture_count)
+// 6. Category Courses (course_id, teacher_id, lecture_count)
+// Each course gets a unique teacher — 30 teachers available, no sharing needed
 // Year 1 courses
 $year1 = [
-    [1, 1, 48],  // Mathematics - Prof. Kim - 48 lectures
-    [2, 2, 32],  // Physics - Prof. Lee - 32
-    [4, 3, 32],  // English - Prof. Choi - 32
-    [5, 4, 16],  // Korean Lit - Prof. Jung - 16
-    [6, 5, 16],  // History - Prof. Kang - 16
-    [7, 6, 32],  // CS - Prof. Yoon - 32
-    [9, 7, 16],  // Art - Prof. Han (sub-range) - 16
-    [10, 3, 16], // PE - Prof. Choi - 16
+    [1,  1,  48],  // Mathematics   - Prof. Smith    - 48 lectures
+    [2,  2,  32],  // Physics       - Prof. Johnson  - 32
+    [4,  3,  32],  // English       - Prof. Williams - 32
+    [5,  4,  16],  // Korean Lit    - Prof. Brown    - 16
+    [6,  5,  16],  // History       - Prof. Taylor   - 16
+    [7,  6,  32],  // CS            - Prof. Davies   - 32
+    [9,  7,  16],  // Art           - Prof. Wilson   - 16
+    [10, 8,  16],  // PE            - Prof. Evans    - 16
 ];
 foreach ($year1 as $c) {
     $db->exec("INSERT INTO category_courses (category_id, course_id, teacher_id, lecture_count)
         VALUES (1, {$c[0]}, {$c[1]}, {$c[2]})");
 }
 
-// Year 2 courses
+// Year 2 courses — different teachers from Year 1 to reduce conflicts
 $year2 = [
-    [1, 1, 48],  // Mathematics - Prof. Kim - 48
-    [3, 2, 32],  // Chemistry - Prof. Lee - 32
-    [4, 4, 32],  // English - Prof. Choi - 32
-    [8, 5, 16],  // Biology - Prof. Kang - 16
-    [12, 6, 16], // Economics - Prof. Yoon - 16
-    [7, 7, 32],  // CS - Prof. Han - 32
-    [11, 3, 16], // Music (sub-range) - Prof. Choi - 16
-    [6, 8, 16],  // History - Prof. Han - 16
+    [1,  9,  48],  // Mathematics   - Prof. Thomas   - 48 lectures
+    [3,  10, 32],  // Chemistry     - Prof. Roberts  - 32
+    [4,  11, 32],  // English       - Prof. Walker   - 32
+    [8,  12, 16],  // Biology       - Prof. Wright   - 16
+    [12, 13, 16],  // Economics     - Prof. Thompson - 16
+    [7,  14, 32],  // CS            - Prof. White    - 32
+    [11, 15, 16],  // Music         - Prof. Hughes   - 16
+    [6,  16, 16],  // History       - Prof. Edwards  - 16
 ];
 foreach ($year2 as $c) {
     $db->exec("INSERT INTO category_courses (category_id, course_id, teacher_id, lecture_count)
@@ -131,5 +139,5 @@ echo "Groups: A, B, C (Year 1), D, E (Year 2)\n";
 echo "\n=== Seed complete! ===\n";
 echo "Schedule period: 2026-09-01 ~ 2026-12-20\n";
 echo "Holidays: Oct 3, Oct 9, Dec 25\n";
-echo "5 groups, 8 teachers, 12 courses\n";
+echo "5 groups, 30 teachers, 12 courses\n";
 echo "\nNext: open the app and click 'Auto-Generate Schedule' on the Schedule page.\n";

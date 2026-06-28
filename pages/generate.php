@@ -99,19 +99,38 @@ foreach ($groups as $group) {
 }
 
 // Greedy assignment: iterate day/slot in order, for each group pick best course
-// - Prefer course different from previous slot (avoid consecutive same course)
-// - Among valid candidates, pick the one with most remaining slots (spread evenly)
-// - Empty slots naturally end up at the end of the week
+// Scoring priorities:
+//   1. Avoid consecutive same course in adjacent slots
+//   2. Prefer courses that appeared LEAST today (spread across days)
+//   3. Among ties, prefer courses with most remaining (fill slots fully)
 
 $teacherAssigned = []; // [dow][slot][teacher_id] = true
 $scheduled = [];
-$groupLastCourse = []; // [gid] => course_id of last assigned slot (reset each day)
+$groupLastCourse = []; // [gid] => course_id of last assigned slot
+$groupDayCount = [];   // [gid][dow][course_id] => count of appearances today
 
-foreach ($teachingDays as $dow) {
-    // Reset consecutive tracking at start of each day
-    $groupLastCourse = [];
+// Calculate ideal daily limit per course based on teacher's actual available days
+$groupDailyLimit = [];
+$numTeachingDays = count($teachingDays);
+foreach ($groups as $group) {
+    $gid = $group['id'];
+    if (!isset($groupEntries[$gid])) continue;
+    foreach ($groupEntries[$gid] as $i => $e) {
+        $tid = $e['teacher_id'];
+        $availDays = 0;
+        foreach ($teachingDays as $dow) {
+            if (isset($teacherAvail[$tid][$dow])) $availDays++;
+        }
+        $availDays = max(1, $availDays);
+        $groupDailyLimit[$gid][$i] = (int)ceil($e['weekly_needed'] / $availDays);
+    }
+}
 
-    for ($slot = 1; $slot <= $dailySlots; $slot++) {
+// Round-robin: fill slot 1 across all days, then slot 2, etc.
+// This distributes courses evenly across days instead of clustering on early days.
+for ($slot = 1; $slot <= $dailySlots; $slot++) {
+    foreach ($teachingDays as $dow) {
+        if ($slot === 1) $groupLastCourse = [];
         foreach ($groups as $group) {
             $gid = $group['id'];
             if (!isset($groupEntries[$gid])) {
@@ -124,7 +143,7 @@ foreach ($teachingDays as $dow) {
 
             $lastCid = $groupLastCourse[$gid] ?? null;
             $bestIdx = -1;
-            $bestScore = -1;
+            $bestScore = -PHP_INT_MAX;
 
             // Pass 1: find best course that is different from previous slot
             foreach ($groupRemaining[$gid] as $i => $rem) {
@@ -133,8 +152,15 @@ foreach ($teachingDays as $dow) {
                 if ($e['course_id'] === $lastCid) continue;
                 if (!isset($teacherAvail[$e['teacher_id']][$dow][$slot])) continue;
                 if (isset($teacherAssigned[$dow][$slot][$e['teacher_id']])) continue;
-                if ($rem > $bestScore) {
-                    $bestScore = $rem;
+
+                $todayCount = $groupDayCount[$gid][$dow][$e['course_id']] ?? 0;
+                $dailyLimit = $groupDailyLimit[$gid][$i];
+                // Strong penalty for exceeding daily limit, then prefer least-used today
+                $score = -$todayCount * 1000;
+                if ($todayCount >= $dailyLimit) $score -= 5000;
+                $score += $rem;
+                if ($score > $bestScore) {
+                    $bestScore = $score;
                     $bestIdx = $i;
                 }
             }
@@ -146,8 +172,14 @@ foreach ($teachingDays as $dow) {
                     $e = $groupEntries[$gid][$i];
                     if (!isset($teacherAvail[$e['teacher_id']][$dow][$slot])) continue;
                     if (isset($teacherAssigned[$dow][$slot][$e['teacher_id']])) continue;
-                    if ($rem > $bestScore) {
-                        $bestScore = $rem;
+
+                    $todayCount = $groupDayCount[$gid][$dow][$e['course_id']] ?? 0;
+                    $dailyLimit = $groupDailyLimit[$gid][$i];
+                    $score = -$todayCount * 1000;
+                    if ($todayCount >= $dailyLimit) $score -= 5000;
+                    $score += $rem;
+                    if ($score > $bestScore) {
+                        $bestScore = $score;
                         $bestIdx = $i;
                     }
                 }
@@ -162,6 +194,7 @@ foreach ($teachingDays as $dow) {
                 $teacherAssigned[$dow][$slot][$e['teacher_id']] = true;
                 $groupRemaining[$gid][$bestIdx]--;
                 $groupLastCourse[$gid] = $e['course_id'];
+                $groupDayCount[$gid][$dow][$e['course_id']] = ($groupDayCount[$gid][$dow][$e['course_id']] ?? 0) + 1;
             } else {
                 $scheduled[] = [
                     'group_id' => $gid, 'day_of_week' => $dow,
