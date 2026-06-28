@@ -1,7 +1,7 @@
 <?php
 require_once __DIR__ . '/config.php';
 
-function initDatabase(): void {
+function initDatabase() {
     $db = getDB();
 
     $db->exec("CREATE TABLE IF NOT EXISTS settings (
@@ -72,6 +72,20 @@ function initDatabase(): void {
         UNIQUE(group_id, day_of_week, slot_number)
     )");
 
+    $db->exec("CREATE TABLE IF NOT EXISTS daily_schedule (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        schedule_date TEXT NOT NULL,
+        group_id INTEGER NOT NULL,
+        slot_number INTEGER NOT NULL,
+        course_id INTEGER,
+        teacher_id INTEGER,
+        status TEXT NOT NULL DEFAULT 'scheduled',
+        FOREIGN KEY (group_id) REFERENCES groups(id) ON DELETE CASCADE,
+        FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE CASCADE,
+        FOREIGN KEY (teacher_id) REFERENCES teachers(id) ON DELETE SET NULL,
+        UNIQUE(schedule_date, group_id, slot_number)
+    )");
+
     $db->exec("CREATE TABLE IF NOT EXISTS lecture_log (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         group_id INTEGER NOT NULL,
@@ -85,19 +99,19 @@ function initDatabase(): void {
     )");
 }
 
-function getSettings(): ?array {
+function getSettings() {
     $db = getDB();
     $result = $db->query("SELECT * FROM settings WHERE id = 1");
     $row = $result->fetchArray(SQLITE3_ASSOC);
     return $row ?: null;
 }
 
-function getDayName(int $dow): string {
+function getDayName($dow) {
     $days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
     return $days[$dow] ?? '';
 }
 
-function getTeachingWeeks(string $startDate, string $endDate, array $weekendDays, array $holidays, ?string $subStart = null, ?string $subEnd = null): int {
+function getTeachingWeeks($startDate, $endDate, $weekendDays, $holidays, $subStart = null, $subEnd = null) {
     $start = new DateTime($subStart ?: $startDate);
     $end = new DateTime($subEnd ?: $endDate);
     $teachingDays = 0;
@@ -115,7 +129,7 @@ function getTeachingWeeks(string $startDate, string $endDate, array $weekendDays
     return max(1, (int)ceil($teachingDays / $daysPerWeek));
 }
 
-function getTeachingDaysOfWeek(array $weekendDays): array {
+function getTeachingDaysOfWeek($weekendDays) {
     $days = [];
     for ($i = 0; $i < 7; $i++) {
         if (!in_array($i, $weekendDays)) {

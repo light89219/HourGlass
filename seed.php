@@ -57,12 +57,11 @@ foreach ($teacherIds as $tid) {
 }
 
 // Restrict some teachers
-$db->exec("DELETE FROM teacher_availability WHERE teacher_id = 1 AND day_of_week IN (2, 4)");   // Prof. Smith: Mon/Wed/Fri only
 $db->exec("DELETE FROM teacher_availability WHERE teacher_id = 8 AND slot_number < 4");          // Prof. Evans: afternoon only (slots 4-6)
 $db->exec("DELETE FROM teacher_availability WHERE teacher_id = 15 AND day_of_week IN (1, 3)");   // Prof. Hughes: Tue/Thu/Fri only
 $db->exec("DELETE FROM teacher_availability WHERE teacher_id = 22 AND slot_number > 3");         // Prof. Jackson: morning only (slots 1-3)
 
-echo "Teacher availability: set (Smith=Mon/Wed/Fri, Evans=afternoon, Hughes=Tue/Thu/Fri, Jackson=morning)\n";
+echo "Teacher availability: set (Evans=afternoon, Hughes=Tue/Thu/Fri, Jackson=morning)\n";
 
 // 4. Courses
 $courses = [
@@ -97,7 +96,8 @@ echo "Categories: Year 1, Year 2\n";
 // Each course gets a unique teacher — 30 teachers available, no sharing needed
 // Year 1 courses
 $year1 = [
-    [1,  1,  48],  // Mathematics   - Prof. Smith    - 48 lectures
+    [1,  1,  24],  // Mathematics   - Prof. Smith    - 24 lectures (Mon/Wed/Fri)
+    [1,  17, 24],  // Mathematics   - Prof. Green    - 24 lectures (all days)
     [2,  2,  32],  // Physics       - Prof. Johnson  - 32
     [4,  3,  32],  // English       - Prof. Williams - 32
     [5,  4,  16],  // Korean Lit    - Prof. Brown    - 16

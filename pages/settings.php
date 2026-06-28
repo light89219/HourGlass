@@ -48,7 +48,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $date = $_POST['holiday_date'] ?? '';
         $settings = getSettings();
         $holidays = $settings ? json_decode($settings['holidays'], true) : [];
-        $holidays = array_values(array_filter($holidays, fn($h) => $h !== $date));
+        $holidays = array_values(array_filter($holidays, function($h) use ($date) { return $h !== $date; }));
         $stmt = $db->prepare("UPDATE settings SET holidays = :h WHERE id = 1");
         $stmt->bindValue(':h', json_encode($holidays), SQLITE3_TEXT);
         $stmt->execute();

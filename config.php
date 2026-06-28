@@ -2,7 +2,7 @@
 define('APP_NAME', 'University Schedule Manager');
 define('DB_PATH', __DIR__ . '/data/schedule.db');
 
-function getDB(): SQLite3 {
+function getDB() {
     static $db = null;
     if ($db === null) {
         $db = new SQLite3(DB_PATH);
@@ -13,11 +13,11 @@ function getDB(): SQLite3 {
     return $db;
 }
 
-function flash(string $type, string $message): void {
+function flash($type, $message) {
     $_SESSION['flash'][] = ['type' => $type, 'message' => $message];
 }
 
-function renderFlash(): string {
+function renderFlash() {
     if (empty($_SESSION['flash'])) return '';
     $html = '';
     foreach ($_SESSION['flash'] as $f) {

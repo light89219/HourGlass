@@ -13,7 +13,7 @@ if (!$settings) {
     exit;
 }
 
-$weekendDays = array_map('intval', array_filter(explode(',', $settings['weekends']), fn($v) => $v !== ''));
+$weekendDays = array_map('intval', array_filter(explode(',', $settings['weekends']), function($v) { return $v !== ''; }));
 $holidays = json_decode($settings['holidays'], true) ?: [];
 $dailySlots = $settings['daily_slots'];
 $teachingDays = getTeachingDaysOfWeek($weekendDays);
@@ -36,14 +36,12 @@ if (empty($groups)) {
     exit;
 }
 
-// Load teacher availability
 $teacherAvail = [];
 $result = $db->query("SELECT * FROM teacher_availability");
 while ($row = $result->fetchArray(SQLITE3_ASSOC)) {
     $teacherAvail[$row['teacher_id']][$row['day_of_week']][$row['slot_number']] = true;
 }
 
-// Load category courses
 $categoryCourses = [];
 $result = $db->query("SELECT cc.*, c.name as course_name, c.sub_start_date, c.sub_end_date
     FROM category_courses cc JOIN courses c ON cc.course_id = c.id ORDER BY c.name");
@@ -51,83 +49,59 @@ while ($row = $result->fetchArray(SQLITE3_ASSOC)) {
     $categoryCourses[$row['category_id']][] = $row;
 }
 
-// Clear existing schedule
+// Clear existing schedules
 $db->exec("DELETE FROM schedule_slots");
+$db->exec("DELETE FROM daily_schedule");
 
-// Fill ALL available slots proportionally by lecture count.
-// Instead of distributing thinly over the entire period, pack every slot from Monday.
-$totalAvailableSlots = $dailySlots * count($teachingDays);
+// ============================================================
+// STEP 1: Even-distribution allocation
+// Each course gets ceil(lecture_count / teaching_weeks) per week
+// so ALL courses finish near the end date at similar progress.
+// ============================================================
+$numTeachingDays = count($teachingDays);
 
 $groupEntries = [];
 $groupRemaining = [];
+$groupDailyLimit = [];
 foreach ($groups as $group) {
     $catId = $group['category_id'];
     if (!isset($categoryCourses[$catId])) continue;
 
-    $catEntries = $categoryCourses[$catId];
-    $totalLectures = array_sum(array_column($catEntries, 'lecture_count'));
-    if ($totalLectures === 0) continue;
+    foreach ($categoryCourses[$catId] as $i => $cc) {
+        $weeks = getTeachingWeeks(
+            $settings['start_date'], $settings['end_date'],
+            $weekendDays, $holidays,
+            $cc['sub_start_date'], $cc['sub_end_date']
+        );
+        $weeklySlots = ($weeks > 0) ? (int)ceil($cc['lecture_count'] / $weeks) : $cc['lecture_count'];
+        $weeklySlots = max(1, $weeklySlots);
 
-    // Largest remainder method: allocate weekly slots proportional to lecture count
-    $floorShares = [];
-    $remainders = [];
-    foreach ($catEntries as $i => $cc) {
-        $raw = $cc['lecture_count'] / $totalLectures * $totalAvailableSlots;
-        $floorShares[$i] = max(1, (int)floor($raw));
-        $remainders[$i] = $raw - $floorShares[$i];
-    }
-
-    $allocated = array_sum($floorShares);
-    $toDistribute = $totalAvailableSlots - $allocated;
-
-    arsort($remainders);
-    foreach ($remainders as $i => $rem) {
-        if ($toDistribute <= 0) break;
-        $floorShares[$i]++;
-        $toDistribute--;
-    }
-
-    foreach ($catEntries as $i => $cc) {
-        $groupEntries[$group['id']][$i] = [
-            'course_id' => $cc['course_id'],
-            'teacher_id' => $cc['teacher_id'],
-            'weekly_needed' => $floorShares[$i],
-            'course_name' => $cc['course_name'],
-        ];
-        $groupRemaining[$group['id']][$i] = $floorShares[$i];
-    }
-}
-
-// Greedy assignment: iterate day/slot in order, for each group pick best course
-// Scoring priorities:
-//   1. Avoid consecutive same course in adjacent slots
-//   2. Prefer courses that appeared LEAST today (spread across days)
-//   3. Among ties, prefer courses with most remaining (fill slots fully)
-
-$teacherAssigned = []; // [dow][slot][teacher_id] = true
-$scheduled = [];
-$groupLastCourse = []; // [gid] => course_id of last assigned slot
-$groupDayCount = [];   // [gid][dow][course_id] => count of appearances today
-
-// Calculate ideal daily limit per course based on teacher's actual available days
-$groupDailyLimit = [];
-$numTeachingDays = count($teachingDays);
-foreach ($groups as $group) {
-    $gid = $group['id'];
-    if (!isset($groupEntries[$gid])) continue;
-    foreach ($groupEntries[$gid] as $i => $e) {
-        $tid = $e['teacher_id'];
+        $tid = $cc['teacher_id'];
         $availDays = 0;
         foreach ($teachingDays as $dow) {
             if (isset($teacherAvail[$tid][$dow])) $availDays++;
         }
-        $availDays = max(1, $availDays);
-        $groupDailyLimit[$gid][$i] = (int)ceil($e['weekly_needed'] / $availDays);
+
+        $idx = count($groupEntries[$group['id']] ?? []);
+        $groupEntries[$group['id']][$idx] = [
+            'course_id' => $cc['course_id'],
+            'teacher_id' => $tid,
+            'weekly_needed' => $weeklySlots,
+            'course_name' => $cc['course_name'],
+        ];
+        $groupRemaining[$group['id']][$idx] = $weeklySlots;
+        $groupDailyLimit[$group['id']][$idx] = (int)ceil($weeklySlots / max(1, $availDays));
     }
 }
 
-// Round-robin: fill slot 1 across all days, then slot 2, etc.
-// This distributes courses evenly across days instead of clustering on early days.
+// ============================================================
+// STEP 2: Build weekly template (round-robin, spread across days)
+// ============================================================
+$teacherAssigned = [];
+$scheduled = [];
+$groupLastCourse = [];
+$groupDayCount = [];
+
 for ($slot = 1; $slot <= $dailySlots; $slot++) {
     foreach ($teachingDays as $dow) {
         if ($slot === 1) $groupLastCourse = [];
@@ -145,7 +119,7 @@ for ($slot = 1; $slot <= $dailySlots; $slot++) {
             $bestIdx = -1;
             $bestScore = -PHP_INT_MAX;
 
-            // Pass 1: find best course that is different from previous slot
+            // Pass 1: different from previous slot
             foreach ($groupRemaining[$gid] as $i => $rem) {
                 if ($rem <= 0) continue;
                 $e = $groupEntries[$gid][$i];
@@ -154,18 +128,14 @@ for ($slot = 1; $slot <= $dailySlots; $slot++) {
                 if (isset($teacherAssigned[$dow][$slot][$e['teacher_id']])) continue;
 
                 $todayCount = $groupDayCount[$gid][$dow][$e['course_id']] ?? 0;
-                $dailyLimit = $groupDailyLimit[$gid][$i];
-                // Strong penalty for exceeding daily limit, then prefer least-used today
+                $limit = $groupDailyLimit[$gid][$i];
                 $score = -$todayCount * 1000;
-                if ($todayCount >= $dailyLimit) $score -= 5000;
+                if ($todayCount >= $limit) $score -= 5000;
                 $score += $rem;
-                if ($score > $bestScore) {
-                    $bestScore = $score;
-                    $bestIdx = $i;
-                }
+                if ($score > $bestScore) { $bestScore = $score; $bestIdx = $i; }
             }
 
-            // Pass 2: if nothing found, allow consecutive same course
+            // Pass 2: allow consecutive
             if ($bestIdx === -1) {
                 foreach ($groupRemaining[$gid] as $i => $rem) {
                     if ($rem <= 0) continue;
@@ -174,14 +144,11 @@ for ($slot = 1; $slot <= $dailySlots; $slot++) {
                     if (isset($teacherAssigned[$dow][$slot][$e['teacher_id']])) continue;
 
                     $todayCount = $groupDayCount[$gid][$dow][$e['course_id']] ?? 0;
-                    $dailyLimit = $groupDailyLimit[$gid][$i];
+                    $limit = $groupDailyLimit[$gid][$i];
                     $score = -$todayCount * 1000;
-                    if ($todayCount >= $dailyLimit) $score -= 5000;
+                    if ($todayCount >= $limit) $score -= 5000;
                     $score += $rem;
-                    if ($score > $bestScore) {
-                        $bestScore = $score;
-                        $bestIdx = $i;
-                    }
+                    if ($score > $bestScore) { $bestScore = $score; $bestIdx = $i; }
                 }
             }
 
@@ -206,10 +173,9 @@ for ($slot = 1; $slot <= $dailySlots; $slot++) {
     }
 }
 
-// Insert all scheduled slots
+// Insert weekly template
 $stmt = $db->prepare("INSERT INTO schedule_slots (group_id, day_of_week, slot_number, course_id, teacher_id)
     VALUES (:g, :d, :s, :c, :t)");
-
 foreach ($scheduled as $s) {
     $stmt->bindValue(':g', $s['group_id'], SQLITE3_INTEGER);
     $stmt->bindValue(':d', $s['day_of_week'], SQLITE3_INTEGER);
@@ -220,7 +186,68 @@ foreach ($scheduled as $s) {
     $stmt->reset();
 }
 
-// Check for unplaced courses
+// ============================================================
+// STEP 3: Expand weekly template into daily_schedule
+// ============================================================
+$weeklyTemplate = [];
+foreach ($scheduled as $s) {
+    $weeklyTemplate[$s['group_id']][$s['day_of_week']][$s['slot_number']] = $s;
+}
+
+// Build course sub-range lookup
+$courseRanges = [];
+$result = $db->query("SELECT id, sub_start_date, sub_end_date FROM courses");
+while ($row = $result->fetchArray(SQLITE3_ASSOC)) {
+    $courseRanges[$row['id']] = $row;
+}
+
+$insertDaily = $db->prepare("INSERT INTO daily_schedule (schedule_date, group_id, slot_number, course_id, teacher_id, status)
+    VALUES (:dt, :g, :s, :c, :t, 'scheduled')");
+
+$current = new DateTime($settings['start_date']);
+$end = new DateTime($settings['end_date']);
+$dailyCount = 0;
+
+while ($current <= $end) {
+    $dow = (int)$current->format('w');
+    $dateStr = $current->format('Y-m-d');
+
+    if (!in_array($dow, $weekendDays) && !in_array($dateStr, $holidays)) {
+        foreach ($groups as $group) {
+            $gid = $group['id'];
+            for ($slot = 1; $slot <= $dailySlots; $slot++) {
+                $tmpl = $weeklyTemplate[$gid][$dow][$slot] ?? null;
+                $courseId = $tmpl['course_id'] ?? null;
+                $teacherId = $tmpl['teacher_id'] ?? null;
+
+                // Check course sub-range
+                if ($courseId && isset($courseRanges[$courseId])) {
+                    $cr = $courseRanges[$courseId];
+                    if ($cr['sub_start_date'] && $dateStr < $cr['sub_start_date']) {
+                        $courseId = null;
+                        $teacherId = null;
+                    }
+                    if ($cr['sub_end_date'] && $dateStr > $cr['sub_end_date']) {
+                        $courseId = null;
+                        $teacherId = null;
+                    }
+                }
+
+                $insertDaily->bindValue(':dt', $dateStr, SQLITE3_TEXT);
+                $insertDaily->bindValue(':g', $gid, SQLITE3_INTEGER);
+                $insertDaily->bindValue(':s', $slot, SQLITE3_INTEGER);
+                $insertDaily->bindValue(':c', $courseId, $courseId ? SQLITE3_INTEGER : SQLITE3_NULL);
+                $insertDaily->bindValue(':t', $teacherId, $teacherId ? SQLITE3_INTEGER : SQLITE3_NULL);
+                $insertDaily->execute();
+                $insertDaily->reset();
+                $dailyCount++;
+            }
+        }
+    }
+    $current->modify('+1 day');
+}
+
+// Check for unplaced courses in weekly template
 $warnings = [];
 foreach ($groups as $group) {
     $gid = $group['id'];
@@ -235,7 +262,7 @@ foreach ($groups as $group) {
 if (!empty($warnings)) {
     flash('error', 'Schedule generated with warnings: ' . implode('; ', $warnings));
 } else {
-    flash('success', 'Schedule generated successfully! All courses placed.');
+    flash('success', "Schedule generated! Weekly template + $dailyCount daily slots created.");
 }
 
 header('Location: ?page=schedule');

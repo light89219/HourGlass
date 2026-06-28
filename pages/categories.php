@@ -117,7 +117,7 @@ if (isset($_GET['manage'])) {
         }
     }
 }
-$assignedPairs = array_map(fn($ac) => $ac['course_id'] . '_' . $ac['teacher_id'], $assignedCourses);
+$assignedPairs = array_map(function($ac) { return $ac['course_id'] . '_' . $ac['teacher_id']; }, $assignedCourses);
 ?>
 
 <div class="page-header">
