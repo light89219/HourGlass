@@ -1,0 +1,75 @@
+# HourGlass Schedule Generator - Input File
+#
+# Usage:
+#   python generate_schedule.py input_example.txt
+#
+# Lines starting with '#' are comments and ignored.
+# Blank lines are ignored.
+#
+# Sections:
+#   [settings]        - Schedule date range, daily slots, weekends, holidays
+#   [teachers]        - One teacher name per line
+#   [unavailability]  - Teacher unavailable slots (teacher: day/slot, ...)
+#   [courses]         - Course names with optional sub-date range (name | start | end)
+#   [categories]      - Group category names (e.g., year levels)
+#   [assignments]     - Category-course-teacher mapping (category | course | teacher | lectures)
+#   [groups]          - Student groups (group_name | category)
+
+[settings]
+start_date = 2025-09-01
+end_date = 2025-10-01
+daily_slots = 6
+# Weekend days: 0=Sun, 1=Mon, 2=Tue, 3=Wed, 4=Thu, 5=Fri, 6=Sat
+weekends = 0, 6
+# Holidays: comma-separated dates (YYYY-MM-DD)
+holidays = 2025-12-25, 2025-12-31, 2026-01-01, 2026-03-08
+
+[teachers]
+# One teacher per line
+Alice Johnson
+Bob Smith
+Charlie Brown
+Diana Lee
+
+[unavailability]
+# Slots where a teacher CANNOT teach.
+# Format: teacher_name: day/slot, day/slot, ...
+# day: 0=Sun, 1=Mon, 2=Tue, 3=Wed, 4=Thu, 5=Fri, 6=Sat
+# slot: 1-based slot number
+Alice Johnson: 3/5, 3/6, 5/6
+Bob Smith: 1/1, 1/2
+
+[courses]
+# Format: name | sub_start_date | sub_end_date
+# Sub-dates are optional (omit for full semester range).
+Mathematics
+Physics | 2025-09-01 | 2025-10-01
+Chemistry
+History
+Literature
+English
+
+[categories]
+# One category per line (e.g., year levels)
+Year 1
+Year 2
+
+[assignments]
+# Which courses each category takes, with which teacher and how many lectures.
+# Format: category | course | teacher | lecture_count
+Year 1 | Mathematics | Alice Johnson | 40
+Year 1 | Physics | Bob Smith | 15
+Year 1 | Chemistry | Charlie Brown | 45
+Year 1 | History | Diana Lee | 30
+Year 2 | Mathematics | Alice Johnson | 40
+Year 2 | Literature | Diana Lee | 20
+Year 2 | Literature | Testing LT | 20
+Year 2 | Chemistry | Charlie Brown | 30
+
+[groups]
+# Student groups and their category.
+# Format: group_name | category
+1-A | Year 1
+1-B | Year 1
+2-A | Year 2
+2-B | Year 2
